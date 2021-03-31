@@ -37,9 +37,9 @@ var CanvasModel = widgets.DOMWidgetModel.extend({
 // Custom View. Renders the widget model.
 var CanvasView = widgets.DOMWidgetView.extend({
     
-    canvas: document.createElement('canvas'),
     // Defines how the widget gets rendered into the DOM
     render: function() {
+	this.canvas = document.createElement('canvas');
         console.log(this.canvas);
         this.el.append(this.canvas);
 
