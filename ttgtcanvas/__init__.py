@@ -1,6 +1,6 @@
 from ._version import version_info, __version__
 
-from .widget import *
+from .modules import *
 
 
 def _jupyter_labextension_paths():
