@@ -4,17 +4,37 @@ import asyncio
 from .base import Base
 import re as _re
 import os
+import time as _time
+
+
+def pause(delay = 1.0):
+  """Pause for delay seconds."""
+  _time.sleep(delay)
 
 _directions = [ (0, 1), (-1, 0), (0, -1), (1, 0) ]
 _orient_dict = { 'E': 3, 'S': 2, 'W': 1, 'N': 0}
 
+
+class _Beeper(object):
+    """One ore more beepers at a crossing in the world."""
+    def __init__(self, world, radius, av, st, num = 1):
+        self.av = av
+        self.st = st
+        self.num = num
+        self.world = world
+
+    def set_number(self, num):
+        self.num = num
+        self.world.set_number(self)
+
+
 class Robot(object):
-    def __init__(self, world, avenue = 1, street = 1, orientation = 'E', beepers = 0, index = 0):
+    def init(self, world, avenue = 1, street = 1, orientation = 'E', beepers = 0, index = 0):
         self._dir = _orient_dict[orientation]
         self._x = avenue
         self._y = street
         self._beeper_bag = beepers
-        self._trace = None
+        self._trace = True
         self._delay = 0
         self._steps = 0
         self.my_index = index
@@ -44,6 +64,7 @@ class Robot(object):
                 self.world.remove_trace(self.my_index)
             self._trace = None
         else:
+            self._trace = True
             x, y  = self._trace_pos()
             self.world.set_trace(self.my_index, x, y, color)
     #   self._trace = _g.Path([_g.Point(x, y)])
@@ -74,6 +95,10 @@ class Robot(object):
             self._y += yy
         self._update_pos()
         self._update_trace()
+        if self._delay > 0:
+            _time.sleep(self._delay)
+
+    
 
     def front_is_clear(self):
         """Returns True if no wall or border in front of robot."""
@@ -102,6 +127,26 @@ class Robot(object):
         """Returns True if Robot is facing north."""
         return (self._dir == 0)
 
+    def carries_beepers(self):
+        """Returns True if some beepers are left in Robot's bag."""
+        return (self._beeper_bag > 0)
+    
+    def on_beeper(self):
+        """Returns True if beepers are present at current robot position."""
+        return ((self._x, self._y) in self.world.beepers)
+
+    def pick_beeper(self):
+        """Robot picks one beeper up at current location."""
+        if self.on_beeper():
+            self.world.remove_beeper(self._x, self._y)
+            self._beeper_bag += 1
+
+    def drop_beeper(self):
+        """Robot drops one beeper down at current location."""
+        if self.carries_beepers():
+            self._beeper_bag -= 1
+            self.world.add_beeper(self._x, self._y)
+
 def _check_world(contents):
     # safety check
     safe = contents[:]
@@ -120,9 +165,7 @@ def _check_world(contents):
 
 
 def load_world(filename):
-    dir = os.path.dirname(__file__)
-    filename = os.path.join(dir, filename)
-    txt = open(os.path.abspath(filename), 'r').read()
+    txt = open(filename, 'r').read()
     txt = _re.sub('\r\n', '\n', str(txt))
     txt = _re.sub('\r', '\n', str(txt))
     _check_world(txt)
@@ -137,6 +180,8 @@ def load_world(filename):
                 beepers= wd["beepers"], 
                 streets= wd["streets"],
                 robot=wd["robot"])
+                
+        display(w)
         return w
     except:
         raise ValueError("Error interpreting world file.")
@@ -163,6 +208,7 @@ class Maze(Base):
         self.num_cols = 2*self.av + 1
         self.num_rows = 2*self.st + 1
         self.walls = options["walls"]
+        self._bot = None
         for (col, row) in self.walls:
             if not (col+row) % 2:
                 raise RuntimeError("Wall in impossible position (%d, %d)." % (col,row))
@@ -170,7 +216,7 @@ class Maze(Base):
         self.borders = []
         self.beeper_icons = {}
         self.set_borders()
-        self.robots = []
+        self.init()
     
 
 
@@ -208,8 +254,16 @@ class Maze(Base):
     def is_clear(self, col, row):
         """Returns True if there is no wall or border here."""
         return not ((col, row) in self.walls or (col, row) in self.borders)
+    
+    def _create_beeper(self, av, st):
+        num = self.beepers[(av, st)]
+        bp = _Beeper(self, 0.6 * self.ts, av, st, num)
+        self.beeper_icons[(av, st)] = bp
+        return bp
+        
 
-    def create_layer(self):
+
+    def init(self):
 
         tsx =  self.width / (self.num_cols + 2)
         tsy =  self.height / (self.num_rows + 2)
@@ -219,29 +273,75 @@ class Maze(Base):
         self.bottom = self.height - 2 * self.ts
         self.top = self.bottom - 2 * self.ts * self.st
 
+
         #UI Add layer
-        _beepers = [{'key':k, 'value': v} for k, v in self.beepers.items()]
+        ##Add Beepers
+        _beepers = []
+        for (av, st) in self.beepers:
+            _beeper = self._create_beeper(av, st)
+            _beepers.append({'key':[av, st], 'value': _beeper.num})
+
         self.js_call('draw_grid', [self.width, self.height, self.av, self.st,  self.ts, self.walls, _beepers])
 
-    def move_to(self, rindex, x, y):
+        #add_robot
+        self.init_robot('./robot-design.svg')
+        return self
+
+    def move_to(self, rindex , x, y):
         self.js_call('move_to', [rindex, x,y])
-    
-    def add_point(self, rindex,  x, y):
+
+    def add_point(self, rindex ,  x, y):
         self.js_call('add_point', [rindex, x,y])
     
-    def add_robot(self, src):
+    ##init robot
+    def init_robot(self, src):
         avenue, street, orientation, beepers = self.robot
-        _rindex = len(self.robots)
-        self.js_call('add_robot', [_rindex, src, avenue, street,orientation, beepers])
-        robot = Robot(self, avenue, street, orientation, beepers, _rindex)
-        self.robots.append(robot)
-        return robot
+        self.js_call('add_robot', [0, src, avenue, street,orientation, beepers])
+        self._bot  =  self._bot or Robot()
+        self._bot.init(self, avenue, street, orientation, beepers, 0)
+        self.js_call('init_robot', [0])
+        return self._bot
+
+    def bot(self):
+        return self._bot
 
     def remove_trace(self, rindex):
-        self.js_call("remove_trace", [_rindex])
+        self.js_call("remove_trace", [rindex])
     
     def set_pause(self, rindex,  delay):
         self.js_call('set_pause', [rindex, delay])
     
     def set_trace(self, rindex, x,y, color):
         self.js_call('set_trace', [rindex, x, y, color])
+    
+    def set_number(self, beeper):
+        self.js_call('set_beeper_number', [beeper.av, beeper.st, beeper.number])
+
+    def add_beeper(self, av, st):
+        x, y = self.cr2xy(2 * av - 1, 2 * st - 1)
+        """Add a single beeper."""
+        if (av, st) in self.beepers:
+            self.beepers[(av, st)] += 1
+            bp = self.beeper_icons[(av,st)]
+            bp.set_number(self.beepers[(av, st)])
+            self.js_call('update_beeper', [av, st, self.beepers[(av, st)]])
+        else:
+            self.beepers[(av, st)] = 1
+            self._create_beeper(av, st)
+            self.js_call('add_beeper', [av, st, x, y, self.beepers[(av, st)]])
+
+    def remove_beeper(self, av, st):
+        """Remove a beeper (does nothing if no beeper here)."""
+        x, y = self.cr2xy(2 * av - 1, 2 * st - 1)
+        
+        if (av, st) in self.beepers:
+            self.beepers[(av, st)] -= 1
+        if self.beepers[(av, st)] == 0:
+            del self.beepers[(av, st)]
+            del self.beeper_icons[(av,st)]
+            self.js_call('remove_beeper', [av, st])
+        else:
+            bp = self.beeper_icons[(av,st)]
+            bp.set_number(self.beepers[(av, st)])
+            self.js_call('update_beeper', [av, st, self.beepers[(av, st)]])
+    

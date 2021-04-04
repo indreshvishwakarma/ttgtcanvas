@@ -34,6 +34,5 @@ class Base(widgets.DOMWidget):
         return asyncio.ensure_future(self._js_call(method_name, datetime.now().strftime('%f'), params))
 
     async def _js_call(self, method_name, cb, params):
-        print("calling {} with {}".format(method_name, params))
         self.current_call = json.dumps({'method_name': method_name, 'params': params, 'cb': cb})
         return await wait_for_change(self, "method_return")
