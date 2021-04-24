@@ -1,10 +1,19 @@
-var baseWigets = require("./base.js");
+var widgets = require("@jupyter-widgets/base");
+var _ = require("lodash");
 var Konva = require("konva");
+const { default: PQueue } = require("p-queue");
+const queue = new PQueue({ concurrency: 1 });
 
-var MazeModel = baseWigets.BaseModel.extend({
-	defaults: _.extend(baseWigets.BaseModel.defaults, {
+var MazeModel = widgets.DOMWidgetModel.extend({
+	defaults: _.extend(widgets.DOMWidgetModel.prototype.defaults(), {
 		_model_name: "MazeModel",
 		_view_name: "MazeView",
+		_model_module: "ttgtcanvas",
+		_view_module: "ttgtcanvas",
+		_model_module_version: "0.2.3",
+		_view_module_version: "0.2.3",
+		current_call: "{}",
+		method_return: "{}",
 	}),
 });
 
@@ -68,7 +77,7 @@ const create_walls = function (layer, walls, left, bottom, ts) {
 const create_av = function (layer, av, ts, l, b, t) {
 	for (let i = 1; i < av; i++) {
 		let x = l + ts * (2 * i);
-		console.log(x);
+
 		let line = new Konva.Line({
 			stroke: "gray",
 			points: [x, t, x, b],
@@ -103,12 +112,6 @@ const create_st = function (layer, st, ts, l, b, r) {
 	}
 };
 
-class Beeper {
-	constructor(obj) {
-		Object.assign(this, obj);
-	}
-}
-
 class Robot {
 	constructor(obj) {
 		Object.assign(this, obj);
@@ -118,15 +121,29 @@ class Robot {
 		this.trace = null;
 		this.pending_moves = [];
 		this.delay = 0.2;
-		let that = this;
-		new Konva.Image.fromURL(this.src, function (darthNode) {
-			that.set_node(darthNode);
-			darthNode.setAttrs({
-				x: 100,
-				y: 100,
+		this.angle = 0;
+		this.rotation_diff = {
+			["0"]: { x: -15, y: -15 },
+			"-90": { x: -15, y: 15 },
+			"-180": { x: 15, y: 15 },
+			"-270": { x: 15, y: -15 },
+		};
+	}
+
+	set_image(src, index) {
+		return new Promise((resolve, reject) => {
+			let that = this;
+			new Konva.Image.fromURL(this.src, function (darthNode) {
+				that.set_node(darthNode);
+				darthNode.setAttrs({
+					x: 100,
+					y: 100,
+					name: `robot-${index}`,
+				});
+				that.layer.add(darthNode);
+				that.layer.batchDraw();
+				resolve(that);
 			});
-			that.layer.add(darthNode);
-			that.layer.batchDraw();
 		});
 	}
 
@@ -140,11 +157,11 @@ class Robot {
 
 	add_point(x, y) {
 		this.points = this.points.concat([x, y]);
-		console.log(this.points);
 	}
 
 	clear_trace() {
 		this.points = [];
+		this.angle = 0;
 		this.line_layer.destroyChildren();
 		this.line_layer.draw();
 	}
@@ -162,6 +179,12 @@ class Robot {
 		this.line_layer.draw();
 	}
 
+	rotate_left() {
+		this.node.rotate(-90);
+		this.angle = (this.angle - 90) % -360;
+		this.line_layer.draw();
+	}
+
 	move_to(x, y) {
 		if (!!!this.node) {
 			this.pending_moves.push([x, y]);
@@ -169,56 +192,96 @@ class Robot {
 		}
 		let that = this;
 
-		var anim = new Konva.Animation(function (frame) {
-			that.node.x(x - 15);
-			that.node.y(y - 15);
-		}, this.layer);
+		return new Promise(function (resolve, reject) {
+			let diff = that.rotation_diff[`${that.angle}`];
+			var anim = new Konva.Animation(function (frame) {
+				that.node.x(x + diff.x);
+				that.node.y(y + diff.y);
+			}, that.layer);
 
-		anim.start();
-
-		let updated = this.node.position();
-		if (updated.x === x && updated.y === y) {
-			anim.stop();
-		}
+			anim.start();
+			setTimeout(resolve, that.delay * 1000);
+			let updated = that.node.position();
+			if (updated.x === x + diff.x && updated.y === x + diff.y) {
+				anim.stop();
+			}
+		}).then((res) => console.log("done", that.delay));
 	}
 }
 
-var MazeView = baseWigets.BaseView.extend({
+var MazeView = widgets.DOMWidgetView.extend({
+	// Defines how the widget gets rendered into the DOM
+
+	method_changed: function () {
+		let current_call = JSON.parse(this.model.get("current_call"));
+		queue.add(() => {
+			let ret =
+				typeof this[current_call.method_name] === "function"
+					? this[current_call.method_name].apply(this, current_call.params)
+					: null;
+
+			console.log("current_call in promise", current_call);
+			let that = this;
+			return Promise.resolve(ret).then(function (x) {
+				// console.log("reached in promise");
+				let data = JSON.stringify({
+					value: x,
+					cb: +new Date(),
+					params: current_call.params,
+					method: current_call.method_name,
+				});
+				console.log("setting return", data);
+				that.model.set("method_return", data);
+				that.model.save_changes();
+				return data;
+			});
+		});
+	},
 	// Defines how the widget gets rendered into the DOM
 	render: function () {
-		this.init();
-		console.log("🚀 ~ file: maze.js ~ line 167 ~ this.el", this.el);
 		this._elem = document.createElement("div");
+
+		console.log("🚀 ~ file: maze.js ~ line 218 ~ this._elem", this);
 		this._elem.setAttribute("id", "container");
 		this.layer = new Konva.Layer();
 		this.line_layer = new Konva.Layer();
-		this.el.appendChild(this._elem);
 		this.robots = [];
+		this.el.appendChild(this._elem);
+		this.method_changed();
+		this.listenTo(this.model, "change:current_call", this.method_changed, this);
 	},
 
 	add_robot: function (robot_index, src, avenue, street, orientation, beepers) {
-		this.robots[robot_index] =
-			this.robots[robot_index] ||
-			new Robot({
-				layer: this.layer,
-				line_layer: this.line_layer,
-				avenue,
-				street,
-				orientation,
-				beepers,
-				src,
-			});
+		if (this.robots[robot_index]) {
+			return Promise.resolve("robot exists");
+		}
+
+		this.robots[robot_index] = new Robot({
+			layer: this.layer,
+			line_layer: this.line_layer,
+			avenue,
+			street,
+			orientation,
+			beepers,
+			src,
+		});
+
+		return this.robots[robot_index].set_image(src, robot_index).then((res) => {
+			console.log(res);
+		});
 	},
 
 	move_to: function (robot_index, x, y) {
 		let robot = this.robots[robot_index];
-		robot.move_to(x, y);
+		return robot.move_to(x, y);
 	},
 
 	add_point: function (robot_index, x, y) {
 		let robot = this.robots[robot_index];
-		robot.add_point(x, y);
-		robot.draw_trace();
+		if (robot) {
+			robot.add_point(x, y);
+			robot.draw_trace();
+		}
 	},
 
 	remove_trace: function (robot_index) {
@@ -228,8 +291,12 @@ var MazeView = baseWigets.BaseView.extend({
 	},
 
 	set_pause: function (robot_index, delay) {
+		console.log("pause");
 		let robot = this.robots[robot_index];
-		robot.delay = delay;
+		if (robot) {
+			robot.delay = delay;
+		}
+		return Promise.resolve(delay);
 	},
 
 	set_trace: function (robot_index, x, y, color = "blue") {
@@ -241,7 +308,9 @@ var MazeView = baseWigets.BaseView.extend({
 
 	init_robot: function (robot_index) {
 		let robot = this.robots[robot_index];
-		robot.clear_trace();
+		if (robot) {
+			robot.clear_trace();
+		}
 	},
 
 	add_beeper: function (av, st, x, y, val) {
@@ -266,13 +335,17 @@ var MazeView = baseWigets.BaseView.extend({
 		this.layer.draw();
 	},
 
+	rotate_left: function (robot_index) {
+		let robot = this.robots[robot_index];
+		robot.rotate_left();
+	},
+
 	draw_grid: function (width, height, av, st, ts, walls, beepers) {
 		this.stage = new Konva.Stage({
 			container: "container",
 			width: width,
 			height: height,
 		});
-		console.log(this.stage);
 
 		// add canvas element
 		this.stage.add(this.layer);
@@ -306,6 +379,8 @@ var MazeView = baseWigets.BaseView.extend({
 		create_beepers(this.layer, beepers, left, bottom, ts);
 
 		this.layer.draw();
+
+		return Promise.resolve("done");
 	},
 });
 

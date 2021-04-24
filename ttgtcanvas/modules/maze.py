@@ -1,10 +1,12 @@
 import ipywidgets as widgets
 from traitlets import Unicode, Bool, validate, TraitError, Int, List, Dict, Float
 import asyncio
-from .base import Base
 import re as _re
 import os
 import time as _time
+import copy
+from datetime import datetime
+import json
 
 
 def pause(delay = 1.0):
@@ -83,20 +85,24 @@ class Robot(object):
     def turn_left(self):
         """Rotate left by 90 degrees."""
         # self._image[self._dir].moveTo(-100, -100)
+        # self.world.rotate_left(self.my_index)
         self._dir = (self._dir + 1) % 4
         self._update_pos()
         self._update_trace()
 
-    def move(self):
-        """Move one street/avenue in direction where robot is facing."""
+    def _move(self):
         if self.front_is_clear():
             xx, yy = _directions[self._dir]
             self._x += xx
             self._y += yy
         self._update_pos()
-        self._update_trace()
-        if self._delay > 0:
-            _time.sleep(self._delay)
+        self._update_trace()        
+
+    def move(self, step=1):
+        """Move one street/avenue in direction where robot is facing."""
+        for x in range(step):
+            self._move()
+
 
     
 
@@ -180,26 +186,43 @@ def load_world(filename):
                 beepers= wd["beepers"], 
                 streets= wd["streets"],
                 robot=wd["robot"])
-                
-        display(w)
         return w
     except:
         raise ValueError("Error interpreting world file.")
 
 
-
 @widgets.register
-class Maze(Base):
+class Maze(widgets.DOMWidget):
 
     # Name of the widget view class in front-end
     _view_name = Unicode('MazeView').tag(sync=True)
     # Name of the widget model class in front-end
     _model_name = Unicode('MazeModel').tag(sync=True)
+    _view_module = Unicode('ttgtcanvas').tag(sync=True)
+
+    # Name of the front-end module containing widget model
+    _model_module = Unicode('ttgtcanvas').tag(sync=True)
+
+    _view_module_version = Unicode('^0.2.3').tag(sync=True)
+    # Version of the front-end module containing widget model
+    _model_module_version = Unicode('^0.2.3').tag(sync=True)
+
+    current_call  = Unicode('{}').tag(sync=True)
+    method_return = Unicode('{}').tag(sync=True)
+
+
+    def js_call(self, method_name, params): 
+        # print("calling method: " + method_name)
+        cb = datetime.now().strftime('%f')
+        self.current_call = json.dumps({'method_name': method_name, 'params': params, 'cb': cb})
+
     
     def __init__(self, **kwargs):
         super(Maze, self).__init__(**kwargs)
         options = {"avenues": 10, "streets": 10, "beepers": {}, "walls": [], "robot": (8, 1, 'E', 0)}
         options.update(kwargs)
+
+        self._beepers = options["beepers"]
         self.av = options["avenues"]
         self.st = options["streets"]
         self.robot = options["robot"] 
@@ -212,13 +235,13 @@ class Maze(Base):
         for (col, row) in self.walls:
             if not (col+row) % 2:
                 raise RuntimeError("Wall in impossible position (%d, %d)." % (col,row))
-        self.beepers = options["beepers"]
         self.borders = []
-        self.beeper_icons = {}
         self.set_borders()
-        self.init()
-    
+        
+        display(self)
+        _time.sleep(1)
 
+        self.init()
 
     def set_borders(self):
         """The world is surrounded by a continuous wall.  This function
@@ -264,7 +287,8 @@ class Maze(Base):
 
 
     def init(self):
-
+        self.beepers = self._beepers.copy()
+        self.beeper_icons = {}
         tsx =  self.width / (self.num_cols + 2)
         tsy =  self.height / (self.num_rows + 2)
         self.ts = min(tsx, tsy)
@@ -281,10 +305,10 @@ class Maze(Base):
             _beeper = self._create_beeper(av, st)
             _beepers.append({'key':[av, st], 'value': _beeper.num})
 
-        self.js_call('draw_grid', [self.width, self.height, self.av, self.st,  self.ts, self.walls, _beepers])
+        self.js_call('draw_grid', [self.width, self.height, self.av, self.st,  self.ts, self.walls, _beepers, self.robot])
 
-        #add_robot
         self.init_robot('./robot-design.svg')
+        # add_robot
         return self
 
     def move_to(self, rindex , x, y):
@@ -316,6 +340,9 @@ class Maze(Base):
     
     def set_number(self, beeper):
         self.js_call('set_beeper_number', [beeper.av, beeper.st, beeper.number])
+
+    def rotate_left(self, rindex):
+        self.js_call('rotate_left', [rindex])
 
     def add_beeper(self, av, st):
         x, y = self.cr2xy(2 * av - 1, 2 * st - 1)
