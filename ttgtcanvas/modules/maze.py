@@ -286,7 +286,7 @@ class Maze(widgets.DOMWidget):
         
 
 
-    def init(self):
+    def init(self, src='./robot-design.svg'):
         self.beepers = self._beepers.copy()
         self.beeper_icons = {}
         tsx =  self.width / (self.num_cols + 2)
@@ -307,7 +307,7 @@ class Maze(widgets.DOMWidget):
 
         self.js_call('draw_grid', [self.width, self.height, self.av, self.st,  self.ts, self.walls, _beepers, self.robot])
 
-        self.init_robot('./robot-design.svg')
+        self.init_robot(src)
         # add_robot
         return self
 
@@ -324,6 +324,7 @@ class Maze(widgets.DOMWidget):
         self._bot  =  self._bot or Robot()
         self._bot.init(self, avenue, street, orientation, beepers, 0)
         self.js_call('init_robot', [0])
+        self._bot._update_pos()
         return self._bot
 
     def bot(self):

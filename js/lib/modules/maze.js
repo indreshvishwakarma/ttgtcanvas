@@ -309,6 +309,9 @@ var MazeView = widgets.DOMWidgetView.extend({
 	init_robot: function (robot_index) {
 		let robot = this.robots[robot_index];
 		if (robot) {
+			while (robot.angle !== 0) {
+				robot.rotate_left();
+			}
 			robot.clear_trace();
 		}
 	},
