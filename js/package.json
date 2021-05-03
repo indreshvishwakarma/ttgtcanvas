@@ -1,6 +1,6 @@
 {
 	"name": "ttgtcanvas",
-	"version": "0.2.3",
+	"version": "0.2.5",
 	"description": "A Custom Jupyter Widget Library",
 	"author": "Indresh Vishwakarma",
 	"main": "lib/index.js",

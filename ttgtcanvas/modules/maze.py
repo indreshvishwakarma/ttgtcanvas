@@ -85,7 +85,7 @@ class Robot(object):
     def turn_left(self):
         """Rotate left by 90 degrees."""
         # self._image[self._dir].moveTo(-100, -100)
-        # self.world.rotate_left(self.my_index)
+        self.world.rotate_left(self.my_index)
         self._dir = (self._dir + 1) % 4
         self._update_pos()
         self._update_trace()
@@ -203,9 +203,9 @@ class Maze(widgets.DOMWidget):
     # Name of the front-end module containing widget model
     _model_module = Unicode('ttgtcanvas').tag(sync=True)
 
-    _view_module_version = Unicode('^0.2.3').tag(sync=True)
+    _view_module_version = Unicode('^0.2.5').tag(sync=True)
     # Version of the front-end module containing widget model
-    _model_module_version = Unicode('^0.2.3').tag(sync=True)
+    _model_module_version = Unicode('^0.2.5').tag(sync=True)
 
     current_call  = Unicode('{}').tag(sync=True)
     method_return = Unicode('{}').tag(sync=True)
