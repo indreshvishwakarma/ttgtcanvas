@@ -36,6 +36,7 @@ class Robot(object):
         self._x = avenue
         self._y = street
         self._beeper_bag = beepers
+        self._flag_bag = 0
         self._trace = True
         self._delay = 0
         self._steps = 0
@@ -140,12 +141,31 @@ class Robot(object):
     def on_beeper(self):
         """Returns True if beepers are present at current robot position."""
         return ((self._x, self._y) in self.world.beepers)
+    
+    def on_flag(self):
+        return ((self._x, self._y) in self.world.flags)
 
     def pick_beeper(self):
         """Robot picks one beeper up at current location."""
         if self.on_beeper():
             self.world.remove_beeper(self._x, self._y)
             self._beeper_bag += 1
+    
+    def pick_flag(self):
+        if self.on_flag():
+            self.world.remove_flag(self._x, self._y)
+            self._flag_bag +=1
+
+    def drop_flag(self):
+        if self.carries_flags():
+            self._flag_bag -= 1
+            self.world.add_flag(self._x, self._y)
+    
+    def flags_count(self):
+        return self._flag_bag
+    
+    def carries_flags(self):
+        return (self._flag_bag > 0)
 
     def drop_beeper(self):
         """Robot drops one beeper down at current location."""
@@ -157,7 +177,7 @@ def _check_world(contents):
     # safety check
     safe = contents[:]
     # only allow known keywords
-    keywords = ["avenues", "streets", "walls", "beepers", "robot",
+    keywords = ["avenues", "streets", "walls", "beepers", "robot","flags",
                 "'s'", "'S'", '"s"', '"S"',
                 "'e'", "'E'", '"e"', '"E"',
                 "'w'", "'W'", '"w"', '"W"',
@@ -185,7 +205,8 @@ def load_world(filename):
                 walls= wd["walls"], 
                 beepers= wd["beepers"], 
                 streets= wd["streets"],
-                robot=wd["robot"])
+                robot=wd["robot"],
+                flags=wd["flags"])
         return w
     except:
         raise ValueError("Error interpreting world file.")
@@ -203,9 +224,9 @@ class Maze(widgets.DOMWidget):
     # Name of the front-end module containing widget model
     _model_module = Unicode('ttgtcanvas').tag(sync=True)
 
-    _view_module_version = Unicode('^0.2.5').tag(sync=True)
+    _view_module_version = Unicode('^0.2.8').tag(sync=True)
     # Version of the front-end module containing widget model
-    _model_module_version = Unicode('^0.2.5').tag(sync=True)
+    _model_module_version = Unicode('^0.2.8').tag(sync=True)
 
     current_call  = Unicode('{}').tag(sync=True)
     method_return = Unicode('{}').tag(sync=True)
@@ -219,10 +240,11 @@ class Maze(widgets.DOMWidget):
     
     def __init__(self, **kwargs):
         super(Maze, self).__init__(**kwargs)
-        options = {"avenues": 10, "streets": 10, "beepers": {}, "walls": [], "robot": (8, 1, 'E', 0)}
+        options = {"avenues": 10, "streets": 10, "beepers": {}, "walls": [], "robot": (8, 1, 'E', 0), "flags": []}
         options.update(kwargs)
 
         self._beepers = options["beepers"]
+        self._flags = options["flags"]
         self.av = options["avenues"]
         self.st = options["streets"]
         self.robot = options["robot"] 
@@ -288,6 +310,9 @@ class Maze(widgets.DOMWidget):
 
     def init(self, src='./robot-design.svg'):
         self.beepers = self._beepers.copy()
+        self.flags = self._flags.copy()
+        self.total_flags = self.flags_count()
+        self.total_beepers = self.beepers_count()
         self.beeper_icons = {}
         tsx =  self.width / (self.num_cols + 2)
         tsy =  self.height / (self.num_rows + 2)
@@ -304,8 +329,8 @@ class Maze(widgets.DOMWidget):
         for (av, st) in self.beepers:
             _beeper = self._create_beeper(av, st)
             _beepers.append({'key':[av, st], 'value': _beeper.num})
-
-        self.js_call('draw_grid', [self.width, self.height, self.av, self.st,  self.ts, self.walls, _beepers, self.robot])
+        
+        self.js_call('draw_grid', [self.width, self.height, self.av, self.st,  self.ts, self.walls, _beepers, self.flags, self.robot])
 
         self.init_robot(src)
         # add_robot
@@ -313,6 +338,9 @@ class Maze(widgets.DOMWidget):
 
     def move_to(self, rindex , x, y):
         self.js_call('move_to', [rindex, x,y])
+        _time.sleep(0.1)
+        if self._bot.on_flag():
+            self._bot.pick_flag()
 
     def add_point(self, rindex ,  x, y):
         self.js_call('add_point', [rindex, x,y])
@@ -345,6 +373,20 @@ class Maze(widgets.DOMWidget):
     def rotate_left(self, rindex):
         self.js_call('rotate_left', [rindex])
 
+    def beepers_count(self):
+        return len(self.beepers)
+
+    def flags_count(self):
+        return len(self.flags)
+    
+    def check(self):
+        ret = (self.beepers_count() == 0) and (self.flags_count() == 0)
+        if ret == True:
+            self.js_call('success_msg', ["Congrats, Task Completed."])
+        else:
+            self.js_call('failed_msg', ["Oops, Task Failed."])
+        return ret
+
     def add_beeper(self, av, st):
         x, y = self.cr2xy(2 * av - 1, 2 * st - 1)
         """Add a single beeper."""
@@ -373,3 +415,15 @@ class Maze(widgets.DOMWidget):
             bp.set_number(self.beepers[(av, st)])
             self.js_call('update_beeper', [av, st, self.beepers[(av, st)]])
     
+
+    def remove_flag(self, av, st):
+        if (av, st) in self.flags:
+            _flag_index = self.flags.index((av, st))
+            self.flags.pop(_flag_index)
+            self.js_call('remove_flag', [av, st])
+    
+    def add_flag(self, av, st):
+        x, y = self.cr2xy(2 * av - 1, 2 * st - 1)
+        if not ((av, st) in self.flags):
+            self.flags.append((av, st))
+            self.js_call('add_flag', [av, st, x, y])

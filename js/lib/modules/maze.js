@@ -4,18 +4,45 @@ var Konva = require("konva");
 const { default: PQueue } = require("p-queue");
 const queue = new PQueue({ concurrency: 1 });
 
+require("../style.css");
+
 var MazeModel = widgets.DOMWidgetModel.extend({
 	defaults: _.extend(widgets.DOMWidgetModel.prototype.defaults(), {
 		_model_name: "MazeModel",
 		_view_name: "MazeView",
 		_model_module: "ttgtcanvas",
 		_view_module: "ttgtcanvas",
-		_model_module_version: "0.2.5",
-		_view_module_version: "0.2.5",
+		_model_module_version: "0.2.8",
+		_view_module_version: "0.2.8",
 		current_call: "{}",
 		method_return: "{}",
 	}),
 });
+
+const draw_flag = function (layer, av, st, x, y) {
+	var triangle = new Konva.RegularPolygon({
+		x: x,
+		y: y - 4,
+		sides: 3,
+		radius: 12,
+		fill: "green",
+		stroke: "#555D50",
+		strokeWidth: 3,
+		rotation: 90,
+	});
+
+	let poll = new Konva.Line({
+		points: [x - 8, y - 18, x - 8, y + 16],
+		fill: "#555D50",
+		stroke: "#555D50",
+		strokeWidth: 5,
+	});
+	let group = new Konva.Group({
+		name: `flag-${av}-${st}`,
+	});
+	group.add(triangle, poll);
+	layer.add(group);
+};
 
 const draw_beeper = function (layer, av, st, x, y, ts, val) {
 	let radius = 0.6 * ts;
@@ -50,6 +77,20 @@ const create_beepers = function (layer, beepers, left, bottom, ts) {
 		const [x, y] = cr2xy(2 * av - 1, 2 * st - 1);
 		let val = beeper.value;
 		draw_beeper(layer, av, st, x, y, ts, val);
+	});
+};
+
+const create_flags = function (layer, flags, left, bottom, ts) {
+	const cr2xy = function (col, row) {
+		return [left + ts * col, bottom - ts * row];
+	};
+
+	flags.map(function (flag) {
+		let av = flag[0];
+		let st = flag[1];
+		const [x, y] = cr2xy(2 * av - 1, 2 * st - 1);
+
+		draw_flag(layer, av, st, x, y);
 	});
 };
 
@@ -133,11 +174,15 @@ class Robot {
 	set_image(src, index) {
 		return new Promise((resolve, reject) => {
 			let that = this;
-			new Konva.Image.fromURL(this.src, function (darthNode) {
+
+			new Konva.Image.fromURL(src, function (darthNode) {
+				that.src = src;
 				that.set_node(darthNode);
 				darthNode.setAttrs({
 					x: 100,
 					y: 100,
+					width: 32,
+					height: 32,
 					name: `robot-${index}`,
 				});
 				that.layer.add(darthNode);
@@ -240,20 +285,38 @@ var MazeView = widgets.DOMWidgetView.extend({
 	// Defines how the widget gets rendered into the DOM
 	render: function () {
 		this._elem = document.createElement("div");
+		this._wrapper = document.createElement("div");
+		this._wrapper.setAttribute("class", "ttgt-wrapper");
+		this._sidebar = document.createElement("button");
+		let bttnTxt = document.createElement("span");
+		let txtNode = document.createTextNode("Toggle");
+		bttnTxt.appendChild(txtNode);
+		bttnTxt.setAttribute("class", "bttn-txt");
+		this._sidebar.onclick = function () {
+			$("#container").toggle();
+		};
+		this._sidebar.appendChild(bttnTxt);
+		this._sidebar.setAttribute("class", "ttgt-sidebar-bttn");
+		this._wrapper.appendChild(this._elem);
+		this._wrapper.appendChild(this._sidebar);
 
 		console.log("🚀 ~ file: maze.js ~ line 218 ~ this._elem", this);
 		this._elem.setAttribute("id", "container");
 		this.layer = new Konva.Layer();
 		this.line_layer = new Konva.Layer();
+		this.msg_layer = new Konva.Layer();
 		this.robots = [];
-		this.el.appendChild(this._elem);
+		this.el.appendChild(this._wrapper);
+
+		//set methods
 		this.method_changed();
 		this.listenTo(this.model, "change:current_call", this.method_changed, this);
 	},
 
 	add_robot: function (robot_index, src, avenue, street, orientation, beepers) {
-		if (this.robots[robot_index]) {
-			return Promise.resolve("robot exists");
+		let robot = this.robots[robot_index];
+		if (robot) {
+			if (robot.node) robot.node.destroy();
 		}
 
 		this.robots[robot_index] = new Robot({
@@ -308,6 +371,7 @@ var MazeView = widgets.DOMWidgetView.extend({
 
 	init_robot: function (robot_index) {
 		let robot = this.robots[robot_index];
+		this.delete_msg();
 		if (robot) {
 			while (robot.angle !== 0) {
 				robot.rotate_left();
@@ -338,12 +402,151 @@ var MazeView = widgets.DOMWidgetView.extend({
 		this.layer.draw();
 	},
 
+	add_flag: function (av, st, x, y) {
+		draw_flag(this.layer, av, st, x, y);
+	},
+
+	remove_flag: function (av, st) {
+		let flag = this.layer.find(`.flag-${av}-${st}`);
+		if (flag) {
+			flag.destroy();
+		}
+		this.layer.draw();
+	},
+
 	rotate_left: function (robot_index) {
 		let robot = this.robots[robot_index];
 		robot.rotate_left();
 	},
 
-	draw_grid: function (width, height, av, st, ts, walls, beepers) {
+	success_msg: function (msg) {
+		this.delete_msg();
+
+		let msg_group = new Konva.Group({
+			opacity: 0,
+			name: "overlay-msg",
+		});
+		var rect2 = new Konva.Rect({
+			x: 60,
+			y: 125,
+			width: 400,
+			height: 200,
+			fill: "white",
+			shadowBlur: 10,
+			cornerRadius: 10,
+		});
+
+		var circle2 = new Konva.Circle({
+			radius: 40,
+			x: 260,
+			y: 130,
+			fill: "green",
+			stroke: "green",
+			strokeWidth: 5,
+		});
+
+		var check = new Konva.Text({
+			x: 240,
+			y: 110,
+			text: "✔",
+			align: "center",
+			fontSize: 50,
+			fontFamily: "Calibri",
+			fill: "white",
+		});
+
+		var msg = new Konva.Text({
+			x: 120,
+			y: 200,
+			text: "Congrats, \n Task Completed.",
+			align: "center",
+			fontSize: 40,
+			fontFamily: "Calibri",
+			fill: "green",
+		});
+
+		msg_group.add(rect2, circle2, msg, check);
+		this.msg_layer.add(msg_group);
+
+		var tween = new Konva.Tween({
+			node: msg_group,
+			opacity: 1,
+			easing: Konva.Easings["EaseOut"],
+			duration: 5,
+		});
+		tween.play();
+	},
+
+	delete_msg: function () {
+		let msg = this.msg_layer.find(`.overlay-msg`);
+		if (msg) {
+			msg.destroy();
+			msg.draw();
+		}
+	},
+	failed_msg: function (msg) {
+		this.delete_msg();
+
+		let msg_group = new Konva.Group({
+			opacity: 0,
+			name: "overlay-msg",
+		});
+
+		var rect2 = new Konva.Rect({
+			x: 60,
+			y: 125,
+			width: 400,
+			height: 200,
+			fill: "white",
+			shadowBlur: 10,
+			cornerRadius: 10,
+		});
+
+		var circle2 = new Konva.Circle({
+			radius: 40,
+			x: 260,
+			y: 130,
+			fill: "red",
+			stroke: "red",
+			align: "center",
+			strokeWidth: 5,
+		});
+
+		var check = new Konva.Text({
+			x: 247,
+			y: 102,
+			text: "x",
+			align: "center",
+			fontSize: 50,
+			fontFamily: "Calibri",
+			fill: "white",
+		});
+
+		var msg = new Konva.Text({
+			x: 120,
+			y: 200,
+			text: "Opps, Task Failed.",
+			align: "center",
+			fontSize: 40,
+			fontFamily: "Calibri",
+			fill: "red",
+		});
+
+		msg_group.add(rect2, circle2, msg, check);
+		this.msg_layer.add(msg_group);
+
+		var tween = new Konva.Tween({
+			node: msg_group,
+			opacity: 1,
+			easing: Konva.Easings["EaseOut"],
+			duration: 5,
+		});
+		tween.play();
+	},
+
+	draw_grid: function (width, height, av, st, ts, walls, beepers, flags) {
+		this._width = width;
+		this._heigth = height;
 		this.stage = new Konva.Stage({
 			container: "container",
 			width: width,
@@ -353,6 +556,7 @@ var MazeView = widgets.DOMWidgetView.extend({
 		// add canvas element
 		this.stage.add(this.layer);
 		this.stage.add(this.line_layer);
+		this.stage.add(this.msg_layer);
 		//init
 		this.ts = ts;
 		let left = 2 * ts;
@@ -380,6 +584,9 @@ var MazeView = widgets.DOMWidgetView.extend({
 
 		//create_beepers
 		create_beepers(this.layer, beepers, left, bottom, ts);
+
+		//create_flags
+		create_flags(this.layer, flags, left, bottom, ts);
 
 		this.layer.draw();
 
