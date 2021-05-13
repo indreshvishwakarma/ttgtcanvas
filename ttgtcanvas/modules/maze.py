@@ -27,7 +27,7 @@ class _Beeper(object):
 
     def set_number(self, num):
         self.num = num
-        self.world.set_number(self)
+        # self.world.update_beeper(self)
 
 
 class Robot(object):
@@ -203,10 +203,10 @@ def load_world(filename):
         w = Maze(
                 avenues= wd["avenues"], 
                 walls= wd["walls"], 
-                beepers= wd["beepers"], 
+                beepers= wd.get("beepers", {}), 
                 streets= wd["streets"],
                 robot=wd["robot"],
-                flags=wd["flags"])
+                flags=wd.get("flags", []))
         return w
     except:
         raise ValueError("Error interpreting world file.")
@@ -224,9 +224,9 @@ class Maze(widgets.DOMWidget):
     # Name of the front-end module containing widget model
     _model_module = Unicode('ttgtcanvas').tag(sync=True)
 
-    _view_module_version = Unicode('^0.2.8').tag(sync=True)
+    _view_module_version = Unicode('^0.3.0').tag(sync=True)
     # Version of the front-end module containing widget model
-    _model_module_version = Unicode('^0.2.8').tag(sync=True)
+    _model_module_version = Unicode('^0.3.0').tag(sync=True)
 
     current_call  = Unicode('{}').tag(sync=True)
     method_return = Unicode('{}').tag(sync=True)
@@ -368,7 +368,7 @@ class Maze(widgets.DOMWidget):
         self.js_call('set_trace', [rindex, x, y, color])
     
     def set_number(self, beeper):
-        self.js_call('set_beeper_number', [beeper.av, beeper.st, beeper.number])
+        self.js_call('set_beeper_number', [beeper.av, beeper.st, beeper.num])
 
     def rotate_left(self, rindex):
         self.js_call('rotate_left', [rindex])
